@@ -9,17 +9,19 @@ def read_dataset(path: str):
     for sentence_id, sentence in dataset.items():
         sentence_id = sentence_id
         sentences[sentence_id] = {
-            'words': sentence['words'],
-            'lemmas': sentence['lemmas'],
-            'pos_tags': sentence['pos_tags'],
-            'dependency_heads': [int(head) for head in sentence['dependency_heads']],
-            'dependency_relations': sentence['dependency_relations'],
-            'predicates': sentence['predicates'],
+            "words": sentence["words"],
+            "lemmas": sentence["lemmas"],
+            "pos_tags": sentence["pos_tags"],
+            "dependency_heads": [int(head) for head in sentence["dependency_heads"]],
+            "dependency_relations": sentence["dependency_relations"],
+            "predicates": sentence["predicates"],
         }
 
         labels[sentence_id] = {
-            'predicates': sentence['predicates'],
-            'roles': {int(p): r for p, r in sentence['roles'].items()} if "roles" in sentence else dict()
+            "predicates": sentence["predicates"],
+            "roles": {int(p): r for p, r in sentence["roles"].items()}
+            if "roles" in sentence
+            else dict(),
         }
 
     return sentences, labels

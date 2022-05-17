@@ -51,8 +51,13 @@ def main(test_path: str, endpoint: str, language: str):
         time.sleep(10)
 
         try:
-            response = requests.post(endpoint,
-                                     json={"data": sentences[list(sentences.keys())[0]], "language": language}).json()
+            response = requests.post(
+                endpoint,
+                json={
+                    "data": sentences[list(sentences.keys())[0]],
+                    "language": language,
+                },
+            ).json()
             response["predictions_34"]
             logging.info("Connection succeded")
             break
@@ -62,7 +67,10 @@ def main(test_path: str, endpoint: str, language: str):
         except KeyError as e:
             logging.error(f"Server response in wrong format")
             # logging.error(f"Response was: {response}")
-            logging.error(e, exc_info=True)
+            if response["error"] == "Bad request":
+                logging.error(f"Error message: {response['message']}", exc_info=True)
+            else:
+                logging.error(e, exc_info=True)
             exit(1)
 
     predictions_34 = {}
@@ -72,7 +80,9 @@ def main(test_path: str, endpoint: str, language: str):
     for sentence_id in track(sentences, description="Evaluating"):
         sentence = sentences[sentence_id]
         try:
-            response = requests.post(endpoint, json={"data": sentence, "language": language}).json()
+            response = requests.post(
+                endpoint, json={"data": sentence, "language": language}
+            ).json()
             predictions_34[sentence_id] = response["predictions_34"]
             predictions_34[sentence_id]["roles"] = {
                 int(i): p for i, p in predictions_34[sentence_id]["roles"].items()
@@ -89,8 +99,11 @@ def main(test_path: str, endpoint: str, language: str):
                 }
         except KeyError as e:
             logging.error(f"Server response in wrong format")
-            logging.error(f"Response was: {response}")
-            logging.error(e, exc_info=True)
+            if response["error"] == "Bad request":
+                logging.error(f"Error message: {response['message']}", exc_info=True)
+            else:
+                logging.error(f"Response was: {response}")
+                logging.error(e, exc_info=True)
             exit(1)
 
     print("MODEL: ARGUMENT IDENTIFICATION + ARGUMENT CLASSIFICATION")
@@ -177,9 +190,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "file", type=str, help="File containing data you want to evaluate upon"
     )
-    parser.add_argument(
-        "language", type=str, help="Language of the dataset"
-    )
+    parser.add_argument("language", type=str, help="Language of the dataset")
     args = parser.parse_args()
 
     main(test_path=args.file, endpoint="http://127.0.0.1:12345", language=args.language)

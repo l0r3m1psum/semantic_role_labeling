@@ -51,10 +51,19 @@ def prepare_data(data):
 @app.route("/<path:path>", methods=["POST", "GET"])
 def annotate(path):
     try:
-
         json_body = request.json
         data = json_body["data"]
         language = json_body["language"]
+
+        if language not in all_languages:
+            return (
+                {
+                    "error": "Bad request",
+                    "message": f"Language `{language}` not supported, please choose one between `EN`, `FR` and `ES`",
+                },
+                400,
+            )
+
         data_34, data_234, data_1234 = prepare_data(data)
 
         predictions_34, predictions_234, predictions_1234 = None, None, None

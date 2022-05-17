@@ -24,6 +24,7 @@ def main(test_path: str):
     predicted_sentences = model.predict(next(iter(sentences.values())))
     print(predicted_sentences)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(

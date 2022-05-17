@@ -65,9 +65,10 @@ class Baseline(Model):
     def predict(self, sentence):
         predicate_identification = []
         for pos in sentence["pos_tags"]:
-            prob = (
-                self.baselines["predicate_identification"].get(pos, dict()).get("positive", 0)
-                / self.baselines["predicate_identification"].get(pos, dict()).get("total", 1)
+            prob = self.baselines["predicate_identification"].get(pos, dict()).get(
+                "positive", 0
+            ) / self.baselines["predicate_identification"].get(pos, dict()).get(
+                "total", 1
             )
             if random.random() < prob:
                 predicate_identification.append(True)
@@ -92,9 +93,12 @@ class Baseline(Model):
 
         argument_identification = []
         for dependency_relation in sentence["dependency_relations"]:
-            prob = (
-                self.baselines["argument_identification"].get(dependency_relation, dict()).get("positive", 0)
-                / self.baselines["argument_identification"].get(dependency_relation, dict()).get("total", 1)
+            prob = self.baselines["argument_identification"].get(
+                dependency_relation, dict()
+            ).get("positive", 0) / self.baselines["argument_identification"].get(
+                dependency_relation, dict()
+            ).get(
+                "total", 1
             )
             if random.random() < prob:
                 argument_identification.append(True)
@@ -137,7 +141,6 @@ class StudentModel(Model):
     def __int__(self, language: str):
         # load the specific model for the input language
         self.language = language
-
 
     def predict(self, sentence):
         """
