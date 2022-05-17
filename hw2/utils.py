@@ -1,8 +1,4 @@
 import json
-from os import PathLike
-from typing import Union
-
-import conllu
 
 
 def read_dataset(path: str):
