@@ -10,7 +10,6 @@ This is the second homework of the NLP 2022 course at Sapienza University of Rom
 #### Teaching Assistants
 
 * **Andrei Stefan Bejgu**
-* **Valerio Neri**
 * **Riccardo Orlando**
 * **Alessandro Scirè**
 * **Simone Tedeschi**
