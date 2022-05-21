@@ -20,7 +20,7 @@ docker ps -q --filter "name=nlp2022-hw2" | grep -q . && docker stop nlp2022-hw2
 docker ps -aq --filter "name=nlp2022-hw2" | grep -q . && docker rm nlp2022-hw2
 
 # build docker file
-docker build . -f Dockerfile -t nlp2022-hw2
+docker build -q . -f Dockerfile -t nlp2022-hw2
 
 # bring model up
 docker run -d -p 12345:12345 --name nlp2022-hw2 nlp2022-hw2
