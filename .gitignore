@@ -157,3 +157,5 @@ data-secret
 server.stderr
 server.stdout
 *.pdf
+*.sublime-project
+*.sublime-workspace
