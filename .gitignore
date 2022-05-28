@@ -159,3 +159,4 @@ server.stdout
 *.pdf
 *.sublime-project
 *.sublime-workspace
+*.pt
