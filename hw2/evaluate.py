@@ -29,7 +29,7 @@ def main(test_path: str, endpoint: str, language: str):
         logging.error(e, exc_info=True)
         exit(1)
 
-    max_try = 10
+    max_try = 2
     iterator = iter(range(max_try))
 
     while True:
