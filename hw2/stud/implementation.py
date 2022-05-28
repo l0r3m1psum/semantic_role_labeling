@@ -1,10 +1,11 @@
 import json
 import random
 
-import numpy as np
 from typing import List, Tuple
 
 from model import Model
+
+from stud.my_model import *
 
 
 def build_model_34(language: str, device: str) -> Model:
@@ -18,7 +19,11 @@ def build_model_34(language: str, device: str) -> Model:
             3: Argument identification.
             4: Argument classification.
     """
-    return Baseline(language=language)
+    # return Baseline(language=language)
+    device, language = language, device
+    model = StudentModel(language)
+    model.model.to(device)
+    return model
 
 
 def build_model_234(language: str, device: str) -> Model:
@@ -138,11 +143,26 @@ class StudentModel(Model):
     # MANDATORY to load the weights that can handle the given language
     # possible languages: ["EN", "FR", "ES"]
     # REMINDER: EN is mandatory the others are extras
-    def __int__(self, language: str):
+    def __init__(self, language: str):
         # load the specific model for the input language
         self.language = language
+        _, self.lemma2index = read_vocab('model/vocab.txt')
+        self.model = SRLModel(
+            self.lemma2index,
+            LEMMAS_EMBED_DIM,
+            predicate2index,
+            PRED_EMBED_DIM,
+            pos_tag2index,
+            POS_EMBED_DIM,
+            NUM_HEADS,
+            LSTM_HIDDEN_DIM,
+            LSTM_LAYERS,
+            len(index2role)
+        )
+        self.model.load_state_dict(torch.load('model/model.pt'))
+        self.model.eval()
 
-    def predict(self, sentence):
+    def predict(self, sentence: dict) -> dict:
         """
         --> !!! STUDENT: implement here your predict function !!! <--
 
@@ -188,4 +208,24 @@ class StudentModel(Model):
                         "roles": dictionary of lists, # A list of roles for each predicate (index) you identify in the sentence.
                     }
         """
-        pass
+
+        predicates = sentence['predicates']
+        if all(predicate == NULL_TAG for predicate in predicates):
+            # FIXME: what am I suposed to return in this case?
+            result = {'roles': {}}
+            return result
+        # return {'roles': {'0': [NULL_TAG]*len(predicates)}}
+
+        prepared_data = sentence_to_tensors(sentence, self.lemma2index,
+            pos_tag2index, predicate2index, role2index)
+
+        result = {'roles': {}}
+        for (lemmas, pos_tags, predicate), i in prepared_data:
+            lemmas = torch.unsqueeze(lemmas, dim=0)
+            pos_tags = torch.unsqueeze(pos_tags, dim=0)
+            predicate = torch.unsqueeze(predicate, dim=0)
+            predicted_roles = self.model(lemmas, pos_tags, predicate)
+            predicted_roles = torch.squeeze(predicted_roles, dim=0)
+            result['roles'][str(i)] = [index2role[n] for n in torch.argmax(predicted_roles, dim=-1)]
+
+        return result
