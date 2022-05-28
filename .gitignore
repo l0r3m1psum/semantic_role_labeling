@@ -160,3 +160,4 @@ server.stdout
 *.sublime-project
 *.sublime-workspace
 *.pt
+*.dat
