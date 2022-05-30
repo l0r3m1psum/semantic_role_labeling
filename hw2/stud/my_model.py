@@ -18,6 +18,7 @@ DROPOUT_RATE: float = 0.2 # probability of removing
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS: int   = 3
 MODEL_FNAME: str = '../model/model.pt'
+POSITIONAL_ENCODING: bool = True
 
 # Vocabulary's hyper-parameters
 LEMMA_KEEP_THRESHOLD: int = 1
@@ -207,29 +208,6 @@ class SRLDataset(torch.utils.data.Dataset):
 	def __getitem__(self, index: int):
 		return self.data[index]
 
-# taken from: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
-class PositionalEncoding(torch.nn.Module):
-
-	def __init__(self, d_model: int, dropout: float, max_len):
-		super().__init__()
-		self.dropout = torch.nn.Dropout(p=dropout)
-
-		position = torch.arange(max_len).unsqueeze(1)
-		div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-		pe = torch.zeros(max_len, 1, d_model)
-		pe[:, 0, 0::2] = torch.sin(position * div_term)
-		# FIXME: why cosine doesn't work?
-		pe[:, 0, 1::2] = torch.cos(position * div_term)
-		self.register_buffer('pe', pe)
-
-	def forward(self, x: torch.Tensor) -> torch.Tensor:
-		"""
-		Args:
-			x: Tensor, shape [seq_len, batch_size, embedding_dim]
-		"""
-		x = x + self.pe[:x.size(0)] # taking the first dimension
-		return self.dropout(x)
-
 class SRLModel(torch.nn.Module):
 
 	def __init__(
@@ -264,14 +242,14 @@ class SRLModel(torch.nn.Module):
 			predicate2index[PAD_PRED]
 		)
 
-		total_embedding_dim = embedding_dim_lemmas\
-			+embedding_dim_pos_tag+embedding_dim_predicates
-
 		self.multihead_attention = torch.nn.MultiheadAttention(
 			embedding_dim_lemmas,
 			num_heads,
 			batch_first=True
 		)
+
+		total_embedding_dim = embedding_dim_lemmas\
+			+embedding_dim_pos_tag+embedding_dim_predicates
 
 		self.recurrent = torch.nn.LSTM(
 			input_size=total_embedding_dim,
@@ -315,7 +293,19 @@ class SRLModel(torch.nn.Module):
 		predicates_embeddings = self.predicates_embeddings(predicates_in_sentences)
 		assert predicates_embeddings.shape == (batch_size, seq_len, PRED_EMBED_DIM)
 
-		# TODO: use positional encoding on lemmas_embeddings
+		if POSITIONAL_ENCODING:
+			# taken from here: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+			position = torch.arange(seq_len).unsqueeze(1) # a column vector
+			div_term = torch.exp(
+				torch.arange(0, LEMMAS_EMBED_DIM, 2)
+				* (-math.log(10000.0) / LEMMAS_EMBED_DIM)
+			) # a row vector
+			pe_matrix = position * div_term # outer product
+			pe = torch.zeros(seq_len, LEMMAS_EMBED_DIM)
+			pe[:, 0::2] = torch.sin(pe_matrix)
+			pe[:, 1::2] = torch.cos(pe_matrix)
+			lemmas_embeddings += pe
+
 		query, key, value = (lemmas_embeddings,)*3
 		# NOTE: should I use key_padding_mask and attn_mask?
 		attention_embeddings, _ = self.multihead_attention(query, key, value,
@@ -428,23 +418,13 @@ def main() -> int:
 		LSTM_LAYERS,
 		len(index2role)
 	)
+	# TODO: try weight=... to devalue the null tag.
 	criterion = torch.nn.CrossEntropyLoss(ignore_index=role2index[PAD_ROLE])
 	optimizer = torch.optim.Adam(model.parameters())
 
 	log_steps: int = 10
 	train_loss: float = 0.0
 	losses: List[Tuple[float, float]] = []
-
-	model.load_state_dict(torch.load(MODEL_FNAME))
-	(lemmas, pos_tags, predicate), _ = train_dataset[0]
-	lemmas = torch.unsqueeze(lemmas, dim=0)
-	pos_tags = torch.unsqueeze(pos_tags, dim=0)
-	predicate = torch.unsqueeze(predicate, dim=0)
-	predicted_roles = model(lemmas, pos_tags, predicate)
-	predicted_roles = torch.squeeze(predicted_roles, dim=0)
-	breakpoint()
-	print(predicted_roles)
-	return 0
 
 	for epoch in range(EPOCHS):
 		print(f' Epoch {epoch + 1:03d}')
@@ -453,14 +433,15 @@ def main() -> int:
 		model.train()
 		for step, batch in enumerate(train_dataloader):
 			(sentences, pos_tags, predicates), actual_roles = batch
+			if __debug__: batch_size, seq_len = actual_roles.shape
+			assert batch_size <= BATCH_SIZE
 			optimizer.zero_grad()
 
 			predicted_roles = model(sentences, pos_tags, predicates)
 			predicted_roles = predicted_roles.view(-1, predicted_roles.shape[-1])
+			assert predicted_roles.shape == (batch_size*seq_len, len(index2role))
 			actual_roles = actual_roles.view(-1)
-			# COME FUNZIONA LOSS IN QUESTO CASO???
-			# https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
-			# TODO: put shape assertions here.
+			assert actual_roles.shape == (batch_size*seq_len,)
 			loss = criterion(predicted_roles, actual_roles)
 			loss.backward()
 			optimizer.step()
