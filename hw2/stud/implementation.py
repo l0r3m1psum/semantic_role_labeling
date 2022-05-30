@@ -211,10 +211,8 @@ class StudentModel(Model):
 
         predicates = sentence['predicates']
         if all(predicate == NULL_TAG for predicate in predicates):
-            # FIXME: what am I suposed to return in this case?
             result = {'roles': {}}
             return result
-        # return {'roles': {'0': [NULL_TAG]*len(predicates)}}
 
         prepared_data = sentence_to_tensors(sentence, self.lemma2index,
             pos_tag2index, predicate2index, role2index)
@@ -226,6 +224,24 @@ class StudentModel(Model):
             predicate = torch.unsqueeze(predicate, dim=0)
             predicted_roles = self.model(lemmas, pos_tags, predicate)
             predicted_roles = torch.squeeze(predicted_roles, dim=0)
-            result['roles'][str(i)] = [index2role[n] for n in torch.argmax(predicted_roles, dim=-1)]
+            # argmax returns the index that makes the tensor in each row maximum
+            # i.e. the prediction with most confidence in for each word in the
+            # sentence. The networks outputs logits (from the linear layer),
+            # that are unormalized probabilities, to see them as probability you
+            # have to use softmax.
+            result['roles'][str(i)] = [index2role[n] for n in torch.argmax(
+                predicted_roles, dim=-1)]
 
         return result
+
+def main() -> int:
+    import os
+    os.chdir('..')
+    model = StudentModel('EN')
+    with open('data/EN/dev.json') as f:
+        sentence = json.load(f)['1996/a/50/18_supp__437:1']
+    _ = model.predict(sentence)
+    return 0
+
+if __name__ == '__main__':
+    raise SystemExit(main())
