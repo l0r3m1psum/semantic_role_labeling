@@ -13,7 +13,6 @@ PRED_EMBED_DIM: int = 16
 POS_EMBED_DIM: int = 16
 TOT_EMBED_DIM: int = LEMMAS_EMBED_DIM+POS_EMBED_DIM+PRED_EMBED_DIM
 # SEQ_LEN: int = 512 # length of the sentence taken as input
-# TODO: try dropout
 DROPOUT_RATE: float = 0.2 # probability of removing
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS: int   = 3
@@ -30,7 +29,7 @@ BATCH_SIZE: int = 100
 TRAIN_FNAME: str = '../data/EN/train.json'
 DEV_FNAME: str = '../data/EN/dev.json'
 DATALOADER_WORKERS: int = 0
-EPOCHS: int = 10
+EPOCHS: int = 20
 LOSS_FNAME: str = '../loss.dat'
 
 OOV_LEMMA: str = '<UNK>'
@@ -224,7 +223,8 @@ class SRLModel(torch.nn.Module):
 			out_features: int
 			) -> None:
 		super().__init__()
-		# TODO: use dropout, and positional encoding.
+
+		self.dropout = torch.nn.Dropout(DROPOUT_RATE)
 
 		self.lemmas_embeddings = torch.nn.Embedding(
 			len(lemma2index),
@@ -295,6 +295,7 @@ class SRLModel(torch.nn.Module):
 
 		if POSITIONAL_ENCODING:
 			# taken from here: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+			# https://kazemnejad.com/blog/transformer_architecture_positional_encoding/
 			position = torch.arange(seq_len).unsqueeze(1) # a column vector
 			div_term = torch.exp(
 				torch.arange(0, LEMMAS_EMBED_DIM, 2)
@@ -305,6 +306,8 @@ class SRLModel(torch.nn.Module):
 			pe[:, 0::2] = torch.sin(pe_matrix)
 			pe[:, 1::2] = torch.cos(pe_matrix)
 			lemmas_embeddings += pe
+
+		lemmas_embeddings = self.dropout(lemmas_embeddings)
 
 		query, key, value = (lemmas_embeddings,)*3
 		# NOTE: should I use key_padding_mask and attn_mask?
@@ -318,9 +321,11 @@ class SRLModel(torch.nn.Module):
 			(attention_embeddings, pos_tag_embeddings, predicates_embeddings),
 			2
 		)
+		embeddings = self.dropout(embeddings)
 		assert embeddings.shape == (batch_size, seq_len, TOT_EMBED_DIM)
 
 		o, (h, c) = self.recurrent(embeddings)
+		o = self.dropout(o)
 
 		out = self.classifier(o)
 		assert out.shape == (batch_size, seq_len, self.out_features)
@@ -418,8 +423,11 @@ def main() -> int:
 		LSTM_LAYERS,
 		len(index2role)
 	)
-	# TODO: try weight=... to devalue the null tag.
-	criterion = torch.nn.CrossEntropyLoss(ignore_index=role2index[PAD_ROLE])
+
+	criterion = torch.nn.CrossEntropyLoss(
+		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]),
+		ignore_index=role2index[PAD_ROLE]
+	)
 	optimizer = torch.optim.Adam(model.parameters())
 
 	log_steps: int = 10
@@ -437,6 +445,7 @@ def main() -> int:
 			assert batch_size <= BATCH_SIZE
 			optimizer.zero_grad()
 
+			# The model outputs logits.
 			predicted_roles = model(sentences, pos_tags, predicates)
 			predicted_roles = predicted_roles.view(-1, predicted_roles.shape[-1])
 			assert predicted_roles.shape == (batch_size*seq_len, len(index2role))
