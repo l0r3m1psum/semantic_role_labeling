@@ -443,9 +443,10 @@ def main() -> int:
 	)
 	criterion = torch.nn.CrossEntropyLoss(
 		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]).to(device),
-		ignore_index=role2index[PAD_ROLE]
+		ignore_index=role2index[PAD_ROLE],
+		reduction='sum'
 	)
-	optimizer = torch.optim.Adam(model.parameters())
+	optimizer = torch.optim.Adam(model.parameters(), weight_decay=None)
 
 	log_steps: int = 10
 	train_loss: float = 0.0
@@ -474,7 +475,7 @@ def main() -> int:
 			actual_roles = actual_roles.view(-1)
 			assert actual_roles.shape == (batch_size*seq_len,)
 			loss = criterion(predicted_roles, actual_roles)
-			loss.backward()
+			loss.backward() # here, if we use 'mps' device, it fails...
 			optimizer.step()
 
 			epoch_loss += loss.tolist()
