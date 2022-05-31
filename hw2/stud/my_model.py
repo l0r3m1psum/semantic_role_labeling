@@ -59,6 +59,15 @@ KEYS = [
 ]
 assert KEYS[-1] == ROLES_KEY
 
+try:
+	device = torch.device('mps') if torch.backends.mps.is_available() \
+		else torch.device('cuda') if torch.cuda.is_available() \
+		else torch.device('cpu')
+except AttributeError as e:
+	pass
+finally:
+	device = torch.device('cpu')
+
 def make_string_to_index_converter(index2any: list) -> dict:
 	return {any: index for index, any in enumerate(index2any)}
 
@@ -294,6 +303,7 @@ class SRLModel(torch.nn.Module):
 		assert predicates_embeddings.shape == (batch_size, seq_len, PRED_EMBED_DIM)
 
 		if POSITIONAL_ENCODING:
+			_, seq_len = sentences.shape
 			# taken from here: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 			# https://kazemnejad.com/blog/transformer_architecture_positional_encoding/
 			position = torch.arange(seq_len).unsqueeze(1) # a column vector
@@ -305,7 +315,7 @@ class SRLModel(torch.nn.Module):
 			pe = torch.zeros(seq_len, LEMMAS_EMBED_DIM)
 			pe[:, 0::2] = torch.sin(pe_matrix)
 			pe[:, 1::2] = torch.cos(pe_matrix)
-			lemmas_embeddings += pe
+			lemmas_embeddings += pe.to(device)
 
 		lemmas_embeddings = self.dropout(lemmas_embeddings)
 
@@ -370,19 +380,24 @@ def main() -> int:
 		lemmas_counter = collections.Counter()
 		with open(VOCAB_FNAME, 'w') as vocab_file, \
 			open(TRAIN_FNAME) as train_data_file:
+
 			print(PAD_LEMMA, file=vocab_file)
 			print(OOV_LEMMA, file=vocab_file)
+
 			sentences = json.load(train_data_file)
+
 			for sentence in sentences.values():
 				if not is_valid_sentence(sentence):
 					print('skipping invalid sentence', file=sys.stderr)
 					continue
 				lemmas_counter.update(sentence['lemmas'])
+
 			for word, num in sorted(lemmas_counter.items()):
 				# NOTE: is evaluation order defined in python?
 				if num > LEMMA_KEEP_THRESHOLD and \
 					random.random() <= LEMMA_KEEP_PROBABILITY:
 					print(word, file=vocab_file)
+
 		del lemmas_counter, sentences, sentence, word, num, vocab_file, train_data_file
 	assert dir() == [], f'{dir()}'
 
@@ -401,6 +416,7 @@ def main() -> int:
 		num_workers=DATALOADER_WORKERS,
 		shuffle=True
 	)
+
 	with open(DEV_FNAME) as f: sentences_dict = json.load(f)
 	validation_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index)
 	validation_dataloader = torch.utils.data.DataLoader(
@@ -410,6 +426,8 @@ def main() -> int:
 		num_workers=DATALOADER_WORKERS,
 		shuffle=False
 	)
+
+	del f, sentences_dict
 
 	model = SRLModel(
 		lemma2index,
@@ -423,9 +441,8 @@ def main() -> int:
 		LSTM_LAYERS,
 		len(index2role)
 	)
-
 	criterion = torch.nn.CrossEntropyLoss(
-		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]),
+		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]).to(device),
 		ignore_index=role2index[PAD_ROLE]
 	)
 	optimizer = torch.optim.Adam(model.parameters())
@@ -438,9 +455,14 @@ def main() -> int:
 		print(f' Epoch {epoch + 1:03d}')
 		epoch_loss: float = 0.0
 
+		model.to(device)
 		model.train()
 		for step, batch in enumerate(train_dataloader):
 			(sentences, pos_tags, predicates), actual_roles = batch
+			sentences = sentences.to(device)
+			pos_tags = pos_tags.to(device)
+			predicates = predicates.to(device)
+			actual_roles = actual_roles.to(device)
 			if __debug__: batch_size, seq_len = actual_roles.shape
 			assert batch_size <= BATCH_SIZE
 			optimizer.zero_grad()
