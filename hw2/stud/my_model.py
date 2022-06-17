@@ -126,12 +126,13 @@ def is_valid_sentence(sentence: dict) -> bool:
 
 	return True
 
-def to_tensor(str_list, dict_mapper, default_key) -> torch.Tensor:
+def to_tensor(str_list, dict_mapper, default_key, device) -> torch.Tensor:
 	'''Converts a list of tring to a tensor of longs'''
 	return torch.as_tensor(
 		[dict_mapper.get(str, dict_mapper[default_key])
 		for str in str_list],
-		dtype=torch.long
+		dtype=torch.long,
+		device=device
 	)
 
 def read_vocab(path):
@@ -164,15 +165,16 @@ def sentence_to_tensors(
 		lemma2index: dict,
 		pos_tag2index: dict,
 		predicate2index: dict,
-		role2index: dict
+		role2index: dict,
+		device
 		) -> list:
 
 	data = []
 	predicate_null_tag = predicate2index[NULL_TAG]
 
-	lemmas = to_tensor(sentence['lemmas'], lemma2index, OOV_LEMMA)
-	pos_tags = to_tensor(sentence['pos_tags'], pos_tag2index, 'X')
-	predicates = to_tensor(sentence['predicates'], predicate2index, NULL_TAG)
+	lemmas = to_tensor(sentence['lemmas'], lemma2index, OOV_LEMMA, device)
+	pos_tags = to_tensor(sentence['pos_tags'], pos_tag2index, 'X', device)
+	predicates = to_tensor(sentence['predicates'], predicate2index, NULL_TAG, device)
 
 	for i, predicate in enumerate(predicates):
 		if predicate == predicate_null_tag: continue
@@ -185,7 +187,7 @@ def sentence_to_tensors(
 
 		if 'roles' in sentence:
 			roles_for_predicate = to_tensor(sentence['roles'][str(i)],
-				role2index, NULL_TAG)
+				role2index, NULL_TAG, device)
 			data.append(((lemmas, pos_tags, tensor_with_one_pred),
 				roles_for_predicate))
 		else:
@@ -201,14 +203,15 @@ class SRLDataset(torch.utils.data.Dataset):
 			lemma2index: dict,
 			pos_tag2index: dict,
 			predicate2index: dict,
-			role2index: dict
+			role2index: dict,
+			device
 			) -> None:
 		super().__init__()
 
 		self.data = []
 		for sentence in sentences:
 			tensors = sentence_to_tensors(sentence, lemma2index, pos_tag2index,
-				predicate2index, role2index)
+				predicate2index, role2index, device)
 			self.data.extend(tensors)
 
 	def __len__(self):
@@ -290,7 +293,7 @@ class SRLModel(torch.nn.Module):
 		assert pos_tags_for_sentences.dtype == sentences.dtype
 
 		assert all(
-			# hackyty hack to avoid using predicate2index[PAD_PRED]
+			# hackyty hack to avoid using predicate2index[PAD_PRED] I use = instead
 			sum(self.predicate_null_tag != predicate and predicate != 0 for predicate in predicates) == 1
 			for predicates in predicates_in_sentences
 		), 'there shall be exactly one predicate in each sentence'
@@ -320,8 +323,8 @@ class SRLModel(torch.nn.Module):
 		lemmas_embeddings = self.dropout(lemmas_embeddings)
 
 		query, key, value = (lemmas_embeddings,)*3
-		# NOTE: should I use key_padding_mask and attn_mask?
 		attention_embeddings, _ = self.multihead_attention(query, key, value,
+			key_padding_mask=(sentences == 0), # hackity hack to avoid using lemma2index[PAD_LEMMA] we use 0 instead
 			need_weights=False)
 		assert attention_embeddings.shape == lemmas_embeddings.shape
 
@@ -408,7 +411,7 @@ def main() -> int:
 		prepare_batch(batch, lemma2index, pos_tag2index, predicate2index, role2index)
 
 	with open(TRAIN_FNAME) as f: sentences_dict = json.load(f)
-	train_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index)
+	train_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index, device)
 	train_dataloader = torch.utils.data.DataLoader(
 		train_dataset,
 		collate_fn=my_collate_fn,
@@ -418,7 +421,7 @@ def main() -> int:
 	)
 
 	with open(DEV_FNAME) as f: sentences_dict = json.load(f)
-	validation_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index)
+	validation_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index, device)
 	validation_dataloader = torch.utils.data.DataLoader(
 		validation_dataset,
 		collate_fn=my_collate_fn,
@@ -441,29 +444,42 @@ def main() -> int:
 		LSTM_LAYERS,
 		len(index2role)
 	)
+	model.to(device)
 	criterion = torch.nn.CrossEntropyLoss(
 		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]).to(device),
 		ignore_index=role2index[PAD_ROLE],
 		reduction='sum'
 	)
-	optimizer = torch.optim.Adam(model.parameters(), weight_decay=None)
+	optimizer = torch.optim.Adam(model.parameters(), weight_decay=0.0)
 
 	log_steps: int = 10
 	train_loss: float = 0.0
 	losses: List[Tuple[float, float]] = []
 
+	def calculate_loss(model, dataloader, is_training):
+		if is_training:
+			model.train()
+		else:
+			model.eval()
+
+		for step, (X, Y) in enumerate(dataloader):
+			if is_training == 'train': optimizer.zero_grad()
+			Y_pred = model(*X)
+			Y_pred = Y_pred.view(-1, Y_pred.shape[-1])
+			Y = Y.view(-1)
+			loss = criterion(Y_pred, Y)
+			tot_loss += loss.tolist()
+			if is_training == 'train':
+				loss.backward()
+				optimizer.step()
+
 	for epoch in range(EPOCHS):
 		print(f' Epoch {epoch + 1:03d}')
 		epoch_loss: float = 0.0
 
-		model.to(device)
 		model.train()
 		for step, batch in enumerate(train_dataloader):
 			(sentences, pos_tags, predicates), actual_roles = batch
-			sentences = sentences.to(device)
-			pos_tags = pos_tags.to(device)
-			predicates = predicates.to(device)
-			actual_roles = actual_roles.to(device)
 			if __debug__: batch_size, seq_len = actual_roles.shape
 			assert batch_size <= BATCH_SIZE
 			optimizer.zero_grad()
@@ -496,8 +512,8 @@ def main() -> int:
 				predictions = model(*X)
 				predictions = predictions.view(-1, predictions.shape[-1])
 				Y = Y.view(-1)
-				sample_loss = criterion(predictions, Y)
-				valid_loss += sample_loss.tolist()
+				loss = criterion(predictions, Y)
+				valid_loss += loss.tolist()
 
 		valid_loss /= len(validation_dataloader)
 

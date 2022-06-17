@@ -21,8 +21,7 @@ def build_model_34(language: str, device: str) -> Model:
     """
     # return Baseline(language=language)
     device, language = language, device
-    model = StudentModel(language)
-    model.model.to(device)
+    model = StudentModel(language, device)
     return model
 
 
@@ -143,9 +142,10 @@ class StudentModel(Model):
     # MANDATORY to load the weights that can handle the given language
     # possible languages: ["EN", "FR", "ES"]
     # REMINDER: EN is mandatory the others are extras
-    def __init__(self, language: str):
+    def __init__(self, language: str, device):
         # load the specific model for the input language
         self.language = language
+        self.device = device
         _, self.lemma2index = read_vocab('model/vocab.txt')
         self.model = SRLModel(
             self.lemma2index,
@@ -159,6 +159,7 @@ class StudentModel(Model):
             LSTM_LAYERS,
             len(index2role)
         )
+        self.model.to(device)
         self.model.load_state_dict(torch.load('model/model.pt'))
         self.model.eval()
 
@@ -209,15 +210,14 @@ class StudentModel(Model):
                     }
         """
 
+        result = {'roles': {}}
         predicates = sentence['predicates']
         if all(predicate == NULL_TAG for predicate in predicates):
-            result = {'roles': {}}
             return result
 
         prepared_data = sentence_to_tensors(sentence, self.lemma2index,
-            pos_tag2index, predicate2index, role2index)
+            pos_tag2index, predicate2index, role2index, self.device)
 
-        result = {'roles': {}}
         for (lemmas, pos_tags, predicate), i in prepared_data:
             lemmas = torch.unsqueeze(lemmas, dim=0)
             pos_tags = torch.unsqueeze(pos_tags, dim=0)
