@@ -1,3 +1,10 @@
+'''
+To run form the hw2 directory use:
+$ rm -f ../model/vocab.txt && caffeinate -d time python3 -m hw2.stud.my_model
+
+Running from that directory is "obligatory" because of how implementation.py
+imports stuff.
+'''
 import os, collections, json, random, sys, math
 
 import torch
@@ -12,29 +19,27 @@ LEMMAS_EMBED_DIM: int = 128
 PRED_EMBED_DIM: int = 16
 POS_EMBED_DIM: int = 16
 TOT_EMBED_DIM: int = LEMMAS_EMBED_DIM+POS_EMBED_DIM+PRED_EMBED_DIM
-# SEQ_LEN: int = 512 # length of the sentence taken as input
 DROPOUT_RATE: float = 0.2 # probability of removing
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS: int   = 3
-MODEL_FNAME: str = '../model/model.pt'
 POSITIONAL_ENCODING: bool = True
 
-# Vocabulary's hyper-parameters
+# Vocabulary's generation parameters
 LEMMA_KEEP_THRESHOLD: int = 1
 LEMMA_KEEP_PROBABILITY: float = 1.0
-VOCAB_FNAME: str = '../model/vocab.txt'
 
 # Trainig hyper-parameters
 BATCH_SIZE: int = 100
+EPOCHS: int = 20
+
+# Files names
+MODEL_FNAME: str = '../model/model.pt'
+VOCAB_FNAME: str = '../model/vocab.txt'
+LOSS_FNAME: str = '../loss.dat'
 TRAIN_FNAME: str = '../data/EN/train.json'
 DEV_FNAME: str = '../data/EN/dev.json'
-DATALOADER_WORKERS: int = 0
-EPOCHS: int = 20
-LOSS_FNAME: str = '../loss.dat'
 
 OOV_LEMMA: str = '<UNK>'
-# For ease of data inspection the padding value should always be the firs in
-# each list.
 PAD_LEMMA: str = '<PAD_LEMMA>'
 PAD_TAG: str = '<PAD_TAG>'
 PAD_ROLE: str = '<PAD_ROLE>'
@@ -59,29 +64,72 @@ KEYS = [
 ]
 assert KEYS[-1] == ROLES_KEY
 
-try:
-	device = torch.device('mps') if torch.backends.mps.is_available() \
-		else torch.device('cuda') if torch.cuda.is_available() \
-		else torch.device('cpu')
-except AttributeError as e:
-	pass
-finally:
-	device = torch.device('cpu')
+device = None
+index2role = None
+role2index = None
+index2predicate = None
+predicate2index = None
+index2pos_tag = None
+pos_tag2index = None
+index2lemma = None
+lemma2index = None
 
-def make_string_to_index_converter(index2any: list) -> dict:
-	return {any: index for index, any in enumerate(index2any)}
+def init_globals(vocab_path) -> None:
+	global device, index2role, role2index, index2predicate, predicate2index, \
+		index2pos_tag, pos_tag2index, index2lemma, lemma2index
 
-index2role = [PAD_ROLE, NULL_TAG] + [s.lower() for s in stud.data.semantic_roles]
-role2index = make_string_to_index_converter(index2role)
+	try:
+		device = torch.device('mps') if torch.backends.mps.is_available() \
+			else torch.device('cuda') if torch.cuda.is_available() \
+			else torch.device('cpu')
+	except AttributeError as e:
+		pass
+	finally:
+		# Saddly the mps backend is not totally usable.
+		device = torch.device('cpu')
 
-# Why the fuck predicates with the W are not present?
-index2predicate = [PAD_PRED, NULL_TAG] + ['WAIT', 'WORK', 'WORSEN', 'WRITE',
-	'WATCH_LOOK-OUT', 'WIN', 'WARN', 'WELCOME', 'WASH_CLEAN'] \
-	+ stud.data.predicates
-predicate2index = make_string_to_index_converter(index2predicate)
+	def make_string_to_index_converter(index2any: list) -> dict:
+		return {any: index for index, any in enumerate(index2any)}
 
-index2pos_tag = [PAD_TAG] + stud.data.pos_tags
-pos_tag2index = make_string_to_index_converter(index2pos_tag)
+	# For ease of data inspection the padding value should always be the first
+	# in each list.
+
+	index2role = [PAD_ROLE, NULL_TAG] + [s.lower() for s in stud.data.semantic_roles]
+	role2index = make_string_to_index_converter(index2role)
+	assert index2role[0] == PAD_ROLE
+
+	index2predicate = [PAD_PRED, NULL_TAG] + stud.data.predicates
+	predicate2index = make_string_to_index_converter(index2predicate)
+	assert index2predicate[0] == PAD_PRED
+
+	index2pos_tag = [PAD_TAG] + stud.data.pos_tags
+	pos_tag2index = make_string_to_index_converter(index2pos_tag)
+	assert index2pos_tag[0] == PAD_TAG
+
+	index2lemma = []
+	lemma2index = {}
+	with open(vocab_path) as f:
+		for index, word in enumerate(f):
+			file_line_no = index+1
+			word = word.rstrip()
+			if not word:
+				print(f'skipping empty line in {vocab_path}:{file_line_no}')
+				continue
+			if ' ' in word:
+				raise Exception(f'space in word found {vocab_path}:{file_line_no}')
+			index2lemma.append(word)
+			lemma2index[word] = index
+	if OOV_LEMMA not in lemma2index:
+		raise Exception('the out of vocabulary token is not present in the vocabulary')
+	assert OOV_LEMMA in index2lemma
+	if PAD_LEMMA not in lemma2index:
+		raise Exception('the padding token is not present in the vocabulary')
+	assert PAD_LEMMA in index2lemma
+	if NULL_TAG in lemma2index:
+		raise Exception('the null tag is present in the vocabulary')
+	assert NULL_TAG not in index2lemma
+	if index2lemma[0] != PAD_LEMMA:
+		raise Exception('The first lemma should be the padding one.')
 
 def is_valid_sentence(sentence: dict) -> bool:
 	'''Validates some of the assumption I have about the data.'''
@@ -96,7 +144,7 @@ def is_valid_sentence(sentence: dict) -> bool:
 		print(sentence[POS_TAGS_KEY])
 		return False
 
-	if any(predicate not in index2predicate for predicate in sentence[PREDICATES_KEY]):
+	if any(predicate not in stud.data.predicates + [NULL_TAG] for predicate in sentence[PREDICATES_KEY]):
 		print('there is some unknown predicate', file=sys.stderr)
 		print(sentence[PREDICATES_KEY])
 		return False
@@ -110,7 +158,7 @@ def is_valid_sentence(sentence: dict) -> bool:
 			return False
 	else:
 		for roles in sentence[ROLES_KEY].values():
-			if any(role not in index2role for role in roles):
+			if any(role.upper() not in stud.data.semantic_roles + [NULL_TAG] for role in roles):
 				print(f'there is an unknown semantic role', file=sys.stderr)
 				print(roles)
 				return False
@@ -135,83 +183,44 @@ def to_tensor(str_list, dict_mapper, default_key, device) -> torch.Tensor:
 		device=device
 	)
 
-def read_vocab(path):
-	index2word = []
-	word2index = {}
-	with open(path) as f:
-		for index, word in enumerate(f):
-			file_line_no = index+1
-			word = word.rstrip()
-			if not word:
-				print(f'skipping empty line in {path}:{file_line_no}')
-				continue
-			if ' ' in word:
-				raise Exception(f'space in word found {path}:{file_line_no}')
-			index2word.append(word)
-			word2index[word] = index
-	if OOV_LEMMA not in word2index:
-		raise Exception('the out of vocabulary token is not present in the vocabulary')
-	assert OOV_LEMMA in index2word
-	if PAD_LEMMA not in word2index:
-		raise Exception('the padding token is not present in the vocabulary')
-	assert PAD_LEMMA in index2word
-	if NULL_TAG in word2index:
-		raise Exception('the null tag is present in the vocabulary')
-	assert NULL_TAG not in index2word
-	return index2word, word2index
-
-def sentence_to_tensors(
-		sentence: dict,
-		lemma2index: dict,
-		pos_tag2index: dict,
-		predicate2index: dict,
-		role2index: dict,
-		device
-		) -> list:
+def sentence_to_tensors(sentence: dict, device) -> list:
 
 	data = []
 	predicate_null_tag = predicate2index[NULL_TAG]
 
-	lemmas = to_tensor(sentence['lemmas'], lemma2index, OOV_LEMMA, device)
-	pos_tags = to_tensor(sentence['pos_tags'], pos_tag2index, 'X', device)
-	predicates = to_tensor(sentence['predicates'], predicate2index, NULL_TAG, device)
+	lemmas = to_tensor(sentence[LEMMAS_KEY], lemma2index, OOV_LEMMA, device)
+	pos_tags = to_tensor(sentence[POS_TAGS_KEY], pos_tag2index, 'X', device)
+	predicates = to_tensor(sentence[PREDICATES_KEY], predicate2index, NULL_TAG, device)
 
 	for i, predicate in enumerate(predicates):
 		if predicate == predicate_null_tag: continue
 		# If no predicate is presente in the sentence we append nothing
 		# to the data.
 
-		tensor_with_one_pred = torch.ones(predicates.shape[0], dtype=torch.long) * predicate_null_tag
+		tensor_with_one_pred = torch.ones(predicates.shape[0], dtype=torch.long) \
+			* predicate_null_tag
 		tensor_with_one_pred[i] = predicate
 		assert tensor_with_one_pred.shape == predicates.shape
 
-		if 'roles' in sentence:
-			roles_for_predicate = to_tensor(sentence['roles'][str(i)],
+		if ROLES_KEY in sentence:
+			roles_for_predicate = to_tensor(sentence[ROLES_KEY][str(i)],
 				role2index, NULL_TAG, device)
 			data.append(((lemmas, pos_tags, tensor_with_one_pred),
 				roles_for_predicate))
 		else:
+			# TODO: this is ugly, I should always return the same amount of data
 			data.append(((lemmas, pos_tags, tensor_with_one_pred), i))
 
 	return data
 
 class SRLDataset(torch.utils.data.Dataset):
 
-	def __init__(
-			self,
-			sentences: list,
-			lemma2index: dict,
-			pos_tag2index: dict,
-			predicate2index: dict,
-			role2index: dict,
-			device
-			) -> None:
+	def __init__(self, sentences: list) -> None:
 		super().__init__()
 
 		self.data = []
 		for sentence in sentences:
-			tensors = sentence_to_tensors(sentence, lemma2index, pos_tag2index,
-				predicate2index, role2index, device)
+			tensors = sentence_to_tensors(sentence, torch.device('cpu'))
 			self.data.extend(tensors)
 
 	def __len__(self):
@@ -275,7 +284,6 @@ class SRLModel(torch.nn.Module):
 
 		if __debug__:
 			self.out_features = out_features
-			self.predicate_null_tag = predicate2index[NULL_TAG]
 
 	def forward(
 			self,
@@ -292,11 +300,14 @@ class SRLModel(torch.nn.Module):
 		assert pos_tags_for_sentences.shape == sentences.shape
 		assert pos_tags_for_sentences.dtype == sentences.dtype
 
+		# The int function is needed when 'mps' device is used, summing boolean
+		# tensors seems to be bugged.
 		assert all(
-			# hackyty hack to avoid using predicate2index[PAD_PRED] I use = instead
-			sum(self.predicate_null_tag != predicate and predicate != 0 for predicate in predicates) == 1
+			sum(int(predicate != predicate2index[NULL_TAG] \
+				and predicate != predicate2index[PAD_PRED]) \
+				for predicate in predicates) == 1
 			for predicates in predicates_in_sentences
-		), 'there shall be exactly one predicate in each sentence'
+		), f'there shall be exactly one predicate in each sentence'
 
 		lemmas_embeddings = self.lemmas_embeddings(sentences)
 		assert lemmas_embeddings.shape == (batch_size, seq_len, LEMMAS_EMBED_DIM)
@@ -324,7 +335,7 @@ class SRLModel(torch.nn.Module):
 
 		query, key, value = (lemmas_embeddings,)*3
 		attention_embeddings, _ = self.multihead_attention(query, key, value,
-			key_padding_mask=(sentences == 0), # hackity hack to avoid using lemma2index[PAD_LEMMA] we use 0 instead
+			key_padding_mask=(sentences == lemma2index[PAD_LEMMA]).to(device),
 			need_weights=False)
 		assert attention_embeddings.shape == lemmas_embeddings.shape
 
@@ -344,7 +355,7 @@ class SRLModel(torch.nn.Module):
 		assert out.shape == (batch_size, seq_len, self.out_features)
 		return out
 
-def prepare_batch(batch, lemma2index, pos_tag2index, predicate2index, role2index):
+def prepare_batch(batch):
 
 	sentences = torch.nn.utils.rnn.pad_sequence(
 		[tup[0][0] for tup in batch],
@@ -393,7 +404,7 @@ def main() -> int:
 				if not is_valid_sentence(sentence):
 					print('skipping invalid sentence', file=sys.stderr)
 					continue
-				lemmas_counter.update(sentence['lemmas'])
+				lemmas_counter.update(sentence[LEMMAS_KEY])
 
 			for word, num in sorted(lemmas_counter.items()):
 				# NOTE: is evaluation order defined in python?
@@ -404,29 +415,24 @@ def main() -> int:
 		del lemmas_counter, sentences, sentence, word, num, vocab_file, train_data_file
 	assert dir() == [], f'{dir()}'
 
-	index2lemma, lemma2index = read_vocab(VOCAB_FNAME)
+	init_globals(VOCAB_FNAME)
 	print(f'total number of words in the vocabulary: {len(index2lemma)}')
 
-	my_collate_fn = lambda batch: \
-		prepare_batch(batch, lemma2index, pos_tag2index, predicate2index, role2index)
-
 	with open(TRAIN_FNAME) as f: sentences_dict = json.load(f)
-	train_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index, device)
+	train_dataset = SRLDataset(sentences_dict.values())
 	train_dataloader = torch.utils.data.DataLoader(
 		train_dataset,
-		collate_fn=my_collate_fn,
+		collate_fn=prepare_batch,
 		batch_size=BATCH_SIZE,
-		num_workers=DATALOADER_WORKERS,
 		shuffle=True
 	)
 
 	with open(DEV_FNAME) as f: sentences_dict = json.load(f)
-	validation_dataset = SRLDataset(sentences_dict.values(), lemma2index, pos_tag2index, predicate2index, role2index, device)
+	validation_dataset = SRLDataset(sentences_dict.values())
 	validation_dataloader = torch.utils.data.DataLoader(
 		validation_dataset,
-		collate_fn=my_collate_fn,
+		collate_fn=prepare_batch,
 		batch_size=BATCH_SIZE,
-		num_workers=DATALOADER_WORKERS,
 		shuffle=False
 	)
 
@@ -456,23 +462,6 @@ def main() -> int:
 	train_loss: float = 0.0
 	losses: List[Tuple[float, float]] = []
 
-	def calculate_loss(model, dataloader, is_training):
-		if is_training:
-			model.train()
-		else:
-			model.eval()
-
-		for step, (X, Y) in enumerate(dataloader):
-			if is_training == 'train': optimizer.zero_grad()
-			Y_pred = model(*X)
-			Y_pred = Y_pred.view(-1, Y_pred.shape[-1])
-			Y = Y.view(-1)
-			loss = criterion(Y_pred, Y)
-			tot_loss += loss.tolist()
-			if is_training == 'train':
-				loss.backward()
-				optimizer.step()
-
 	for epoch in range(EPOCHS):
 		print(f' Epoch {epoch + 1:03d}')
 		epoch_loss: float = 0.0
@@ -482,6 +471,10 @@ def main() -> int:
 			(sentences, pos_tags, predicates), actual_roles = batch
 			if __debug__: batch_size, seq_len = actual_roles.shape
 			assert batch_size <= BATCH_SIZE
+			sentences = sentences.to(device)
+			pos_tags = pos_tags.to(device)
+			predicates = predicates.to(device)
+			actual_roles = actual_roles.to(device)
 			optimizer.zero_grad()
 
 			# The model outputs logits.

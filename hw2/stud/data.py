@@ -440,7 +440,16 @@ predicates = ['ABSORB',
  'USE',
  'VERIFY',
  'VIOLATE',
- 'VISIT']
+ 'VISIT',
+ 'WAIT',
+ 'WARN',
+ 'WASH_CLEAN',
+ 'WATCH_LOOK-OUT',
+ 'WELCOME',
+ 'WIN',
+ 'WORK',
+ 'WORSEN',
+ 'WRITE']
 
 pos_tags = ['ADJ',
  'ADP',

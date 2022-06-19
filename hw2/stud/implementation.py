@@ -6,7 +6,9 @@ from typing import List, Tuple
 from model import Model
 
 from stud.my_model import *
-
+# The following line is needed to use the global variables initialized by
+# init_globals, Python is really the worst programming language ever invented.
+import stud.my_model
 
 def build_model_34(language: str, device: str) -> Model:
     """
@@ -20,7 +22,8 @@ def build_model_34(language: str, device: str) -> Model:
             4: Argument classification.
     """
     # return Baseline(language=language)
-    device, language = language, device
+    device, language = language, device # NOTE: maybe this was changed in their repo so I have to keep an eye out for breaking changes
+    init_globals('model/vocab.txt')
     model = StudentModel(language, device)
     return model
 
@@ -146,18 +149,17 @@ class StudentModel(Model):
         # load the specific model for the input language
         self.language = language
         self.device = device
-        _, self.lemma2index = read_vocab('model/vocab.txt')
         self.model = SRLModel(
-            self.lemma2index,
+            stud.my_model.lemma2index,
             LEMMAS_EMBED_DIM,
-            predicate2index,
+            stud.my_model.predicate2index,
             PRED_EMBED_DIM,
-            pos_tag2index,
+            stud.my_model.pos_tag2index,
             POS_EMBED_DIM,
             NUM_HEADS,
             LSTM_HIDDEN_DIM,
             LSTM_LAYERS,
-            len(index2role)
+            len(stud.my_model.index2role)
         )
         self.model.to(device)
         self.model.load_state_dict(torch.load('model/model.pt'))
@@ -211,12 +213,11 @@ class StudentModel(Model):
         """
 
         result = {'roles': {}}
-        predicates = sentence['predicates']
+        predicates = sentence[PREDICATES_KEY]
         if all(predicate == NULL_TAG for predicate in predicates):
             return result
 
-        prepared_data = sentence_to_tensors(sentence, self.lemma2index,
-            pos_tag2index, predicate2index, role2index, self.device)
+        prepared_data = sentence_to_tensors(sentence, self.device)
 
         for (lemmas, pos_tags, predicate), i in prepared_data:
             lemmas = torch.unsqueeze(lemmas, dim=0)
@@ -229,7 +230,7 @@ class StudentModel(Model):
             # sentence. The networks outputs logits (from the linear layer),
             # that are unormalized probabilities, to see them as probability you
             # have to use softmax.
-            result['roles'][str(i)] = [index2role[n] for n in torch.argmax(
+            result[ROLES_KEY][str(i)] = [stud.my_model.index2role[n] for n in torch.argmax(
                 predicted_roles, dim=-1)]
 
         return result
@@ -239,7 +240,8 @@ def main() -> int:
     os.chdir('..')
     model = StudentModel('EN')
     with open('data/EN/dev.json') as f:
-        sentence = json.load(f)['1996/a/50/18_supp__437:1']
+        sentence_id = '1996/a/50/18_supp__437:1'
+        sentence = json.load(f)[sentence_id]
     _ = model.predict(sentence)
     return 0
 
