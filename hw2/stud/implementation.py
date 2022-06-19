@@ -219,7 +219,8 @@ class StudentModel(Model):
 
         prepared_data = sentence_to_tensors(sentence, self.device)
 
-        for (lemmas, pos_tags, predicate), i in prepared_data:
+        for lemmas, pos_tags, predicate, _, i in prepared_data:
+            assert _ is None
             lemmas = torch.unsqueeze(lemmas, dim=0)
             pos_tags = torch.unsqueeze(pos_tags, dim=0)
             predicate = torch.unsqueeze(predicate, dim=0)

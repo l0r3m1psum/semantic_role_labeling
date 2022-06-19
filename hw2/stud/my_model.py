@@ -1,6 +1,6 @@
 '''
 To run form the hw2 directory use:
-$ rm -f ../model/vocab.txt && caffeinate -d time python3 -m hw2.stud.my_model
+$ rm -f ../model/vocab.txt && caffeinate -d time python3 -m hw2.stud.my_model && echo '\a'
 
 Running from that directory is "obligatory" because of how implementation.py
 imports stuff.
@@ -31,6 +31,7 @@ LEMMA_KEEP_PROBABILITY: float = 1.0
 # Trainig hyper-parameters
 BATCH_SIZE: int = 100
 EPOCHS: int = 20
+# TODO: use PATIENCE
 
 # Files names
 MODEL_FNAME: str = '../model/model.pt'
@@ -83,7 +84,7 @@ def init_globals(vocab_path) -> None:
 			else torch.device('cuda') if torch.cuda.is_available() \
 			else torch.device('cpu')
 	except AttributeError as e:
-		pass
+		device = torch.device('cpu')
 	finally:
 		# Saddly the mps backend is not totally usable.
 		device = torch.device('cpu')
@@ -184,9 +185,12 @@ def to_tensor(str_list, dict_mapper, default_key, device) -> torch.Tensor:
 	)
 
 def sentence_to_tensors(sentence: dict, device) -> list:
+	'''Takes a sentence dictionary, converts it into a list with an element for
+	each predicate in the sentence.'''
 
 	data = []
 	predicate_null_tag = predicate2index[NULL_TAG]
+	sentence_has_roles = ROLES_KEY in sentence
 
 	lemmas = to_tensor(sentence[LEMMAS_KEY], lemma2index, OOV_LEMMA, device)
 	pos_tags = to_tensor(sentence[POS_TAGS_KEY], pos_tag2index, 'X', device)
@@ -202,14 +206,12 @@ def sentence_to_tensors(sentence: dict, device) -> list:
 		tensor_with_one_pred[i] = predicate
 		assert tensor_with_one_pred.shape == predicates.shape
 
-		if ROLES_KEY in sentence:
-			roles_for_predicate = to_tensor(sentence[ROLES_KEY][str(i)],
-				role2index, NULL_TAG, device)
-			data.append(((lemmas, pos_tags, tensor_with_one_pred),
-				roles_for_predicate))
-		else:
-			# TODO: this is ugly, I should always return the same amount of data
-			data.append(((lemmas, pos_tags, tensor_with_one_pred), i))
+		# If the sentence has no roles it means that we are trying to do a
+		# prediction and we need to generate the index for the roles in the
+		# sentence.
+		roles_for_predicate = to_tensor(sentence[ROLES_KEY][str(i)],
+				role2index, NULL_TAG, device) if sentence_has_roles else None
+		data.append((lemmas, pos_tags, tensor_with_one_pred, roles_for_predicate, i))
 
 	return data
 
@@ -358,27 +360,27 @@ class SRLModel(torch.nn.Module):
 def prepare_batch(batch):
 
 	sentences = torch.nn.utils.rnn.pad_sequence(
-		[tup[0][0] for tup in batch],
+		[tup[0] for tup in batch],
 		batch_first=True,
 		padding_value=lemma2index[PAD_LEMMA]
 	)
 	pos_tags = torch.nn.utils.rnn.pad_sequence(
-		[tup[0][1] for tup in batch],
+		[tup[1] for tup in batch],
 		batch_first=True,
 		padding_value=pos_tag2index[PAD_TAG]
 	)
 	predicates = torch.nn.utils.rnn.pad_sequence(
-		[tup[0][2] for tup in batch],
+		[tup[2] for tup in batch],
 		batch_first=True,
 		padding_value=predicate2index[PAD_PRED]
 	)
 	roles = torch.nn.utils.rnn.pad_sequence(
-		[tup[1] for tup in batch],
+		[tup[3] for tup in batch],
 		batch_first=True,
 		padding_value=role2index[PAD_ROLE]
 	)
 
-	return (sentences, pos_tags, predicates), roles
+	return sentences, pos_tags, predicates, roles
 
 def main() -> int:
 	# Seeding stuff
@@ -438,6 +440,8 @@ def main() -> int:
 
 	del f, sentences_dict
 
+	# NOTE: since lemma2index, predicate2index, and pos_tag2index are global
+	# variables they can also be ommited from the function arguments.
 	model = SRLModel(
 		lemma2index,
 		LEMMAS_EMBED_DIM,
@@ -468,7 +472,7 @@ def main() -> int:
 
 		model.train()
 		for step, batch in enumerate(train_dataloader):
-			(sentences, pos_tags, predicates), actual_roles = batch
+			sentences, pos_tags, predicates, actual_roles = batch
 			if __debug__: batch_size, seq_len = actual_roles.shape
 			assert batch_size <= BATCH_SIZE
 			sentences = sentences.to(device)
@@ -501,11 +505,16 @@ def main() -> int:
 		valid_loss = 0.0
 		model.eval()
 		with torch.no_grad():
-			for X, Y in validation_dataloader:
-				predictions = model(*X)
+			for batch in validation_dataloader:
+				sentences, pos_tags, predicates, actual_roles= batch
+				sentences = sentences.to(device)
+				pos_tags = pos_tags.to(device)
+				predicates = predicates.to(device)
+				actual_roles = actual_roles.to(device)
+				predictions = model(sentences, pos_tags, predicates)
 				predictions = predictions.view(-1, predictions.shape[-1])
-				Y = Y.view(-1)
-				loss = criterion(predictions, Y)
+				actual_roles = actual_roles.view(-1)
+				loss = criterion(predictions, actual_roles)
 				valid_loss += loss.tolist()
 
 		valid_loss /= len(validation_dataloader)
