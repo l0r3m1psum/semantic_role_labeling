@@ -302,11 +302,9 @@ class SRLModel(torch.nn.Module):
 		assert pos_tags_for_sentences.shape == sentences.shape
 		assert pos_tags_for_sentences.dtype == sentences.dtype
 
-		# The int function is needed when 'mps' device is used, summing boolean
-		# tensors seems to be bugged.
 		assert all(
-			sum(int(predicate != predicate2index[NULL_TAG] \
-				and predicate != predicate2index[PAD_PRED]) \
+			sum(predicate != predicate2index[NULL_TAG] \
+				and predicate != predicate2index[PAD_PRED] \
 				for predicate in predicates) == 1
 			for predicates in predicates_in_sentences
 		), f'there shall be exactly one predicate in each sentence'
