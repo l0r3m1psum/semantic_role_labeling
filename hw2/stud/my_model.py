@@ -1,6 +1,6 @@
 '''
 To run form the hw2 directory use:
-$ rm -f ../model/vocab.txt && caffeinate -d time python3 -m hw2.stud.my_model && echo '\a'
+$ rm -f ../model/vocab.txt && caffeinate -d time python3 -m stud.my_model && echo '\a'
 
 Running from that directory is "obligatory" because of how implementation.py
 imports stuff.
@@ -86,7 +86,7 @@ def init_globals(vocab_path) -> None:
 	except AttributeError as e:
 		device = torch.device('cpu')
 	finally:
-		# Saddly the mps backend is not totally usable.
+		# Saddly the mps backend is slow...
 		device = torch.device('cpu')
 
 	def make_string_to_index_converter(index2any: list) -> dict:
@@ -252,23 +252,27 @@ class SRLModel(torch.nn.Module):
 		self.lemmas_embeddings = torch.nn.Embedding(
 			len(lemma2index),
 			embedding_dim_lemmas,
-			lemma2index[PAD_LEMMA]
+			lemma2index[PAD_LEMMA],
+			device=device
 		)
 		self.pos_tag_embeddings = torch.nn.Embedding(
 			len(pos_tag2index),
 			embedding_dim_pos_tag,
-			pos_tag2index[PAD_TAG]
+			pos_tag2index[PAD_TAG],
+			device=device
 		)
 		self.predicates_embeddings = torch.nn.Embedding(
 			len(predicate2index),
 			embedding_dim_predicates,
-			predicate2index[PAD_PRED]
+			predicate2index[PAD_PRED],
+			device=device
 		)
 
 		self.multihead_attention = torch.nn.MultiheadAttention(
 			embedding_dim_lemmas,
 			num_heads,
-			batch_first=True
+			batch_first=True,
+			device=device
 		)
 
 		total_embedding_dim = embedding_dim_lemmas\
@@ -279,10 +283,12 @@ class SRLModel(torch.nn.Module):
 			hidden_size=lstm_hidden_dim,
 			num_layers=lstm_layers_num,
 			batch_first=True,
-			bidirectional=True
+			bidirectional=True,
+			device=device
 		)
 		lstm_output_dim = 2*lstm_hidden_dim # because of bidirectional LSTM
-		self.classifier = torch.nn.Linear(lstm_output_dim, out_features)
+		self.classifier = torch.nn.Linear(lstm_output_dim, out_features,
+			device=device)
 
 		if __debug__:
 			self.out_features = out_features
@@ -486,7 +492,7 @@ def main() -> int:
 			actual_roles = actual_roles.view(-1)
 			assert actual_roles.shape == (batch_size*seq_len,)
 			loss = criterion(predicted_roles, actual_roles)
-			loss.backward() # here, if we use 'mps' device, it fails...
+			loss.backward()
 			optimizer.step()
 
 			epoch_loss += loss.tolist()
