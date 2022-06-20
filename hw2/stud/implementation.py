@@ -237,6 +237,7 @@ class StudentModel(Model):
         return result
 
 def main() -> int:
+    # This function is suposed to run from the hw2 directory of the project.
     import os
     os.chdir('..')
     model = StudentModel('EN')
