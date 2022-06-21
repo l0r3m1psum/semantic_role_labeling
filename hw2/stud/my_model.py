@@ -2,6 +2,8 @@
 To run form the hw2 directory use:
 $ rm -f ../model/vocab.txt && caffeinate -d time python3 -m stud.my_model && echo '\a'
 
+The -O option of the python interpreter disable assertions.
+
 Running from that directory is "obligatory" because of how implementation.py
 imports stuff.
 '''
@@ -29,6 +31,9 @@ LEMMA_KEEP_THRESHOLD: int = 1
 LEMMA_KEEP_PROBABILITY: float = 1.0
 
 # Trainig hyper-parameters
+DEFAULT_LOSS_WEIGHT: float = 1.0
+MINOR_LOOS_WEIGHT: float = 0.2
+L2_CONTRIBUTION: float = 0.001
 BATCH_SIZE: int = 100
 EPOCHS: int = 30
 # TODO: use PATIENCE
@@ -467,18 +472,22 @@ def main() -> int:
 	)
 	model.to(device)
 	criterion = torch.nn.CrossEntropyLoss(
-		weight=torch.tensor([0.2 if role == NULL_TAG else 1.0 for role in index2role]).to(device),
+		weight=torch.tensor(
+			[MINOR_LOOS_WEIGHT if role == NULL_TAG else DEFAULT_LOSS_WEIGHT
+			for role in index2role]
+		).to(device),
 		ignore_index=role2index[PAD_ROLE],
 		reduction='sum'
 	)
-	optimizer = torch.optim.Adam(model.parameters(), weight_decay=0.0) # TODO: try weight_decay=0.01
+	optimizer = torch.optim.Adam(model.parameters(), weight_decay=L2_CONTRIBUTION)
 
 	log_steps: int = 10
 	train_loss: float = 0.0
+	best_valid_loss: float = float('inf')
 	losses: List[Tuple[float, float]] = []
 
 	for epoch in range(EPOCHS):
-		print(f' Epoch {epoch + 1:03d}')
+		print(f' Epoch {epoch:03d}')
 		epoch_loss: float = 0.0
 
 		model.train()
@@ -529,6 +538,10 @@ def main() -> int:
 				valid_loss += loss.tolist()
 
 		valid_loss /= len(validation_dataloader)
+		if valid_loss < best_valid_loss:
+			best_valid_loss = valid_loss
+			print('saving best model overall')
+			torch.save(model.state_dict(), MODEL_FNAME+'.best')
 
 		print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
 		losses.append((avg_epoch_loss, valid_loss))
@@ -537,7 +550,8 @@ def main() -> int:
 
 	avg_epoch_loss = train_loss/EPOCHS
 
-	torch.save(model.state_dict(), MODEL_FNAME)
+	print('saving last model')
+	torch.save(model.state_dict(), MODEL_FNAME+'.last')
 
 	with open(LOSS_FNAME, 'w') as loss_file:
 		print('# train development', file=loss_file)
