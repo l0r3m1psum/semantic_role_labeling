@@ -30,7 +30,7 @@ LEMMA_KEEP_PROBABILITY: float = 1.0
 
 # Trainig hyper-parameters
 BATCH_SIZE: int = 100
-EPOCHS: int = 20
+EPOCHS: int = 30
 # TODO: use PATIENCE
 
 # Files names
@@ -159,6 +159,12 @@ def is_valid_sentence(sentence: dict) -> bool:
 			return False
 	else:
 		for roles in sentence[ROLES_KEY].values():
+			# ``Who did What to Whom, How, Where and When?'' Given that `What'
+			# is the precidate the rest of the W questions are the 4 possible
+			# roles.
+			if sum(role != NULL_TAG for role in roles) > 4:
+				print('There are more than 4 roles', file=sys.stderr)
+				return False
 			if any(role.upper() not in stud.data.semantic_roles + [NULL_TAG] for role in roles):
 				print(f'there is an unknown semantic role', file=sys.stderr)
 				print(roles)
@@ -323,6 +329,7 @@ class SRLModel(torch.nn.Module):
 		assert predicates_embeddings.shape == (batch_size, seq_len, PRED_EMBED_DIM)
 
 		if POSITIONAL_ENCODING:
+			# FIXME: this is slow on the GPU
 			_, seq_len = sentences.shape
 			# taken from here: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 			# https://kazemnejad.com/blog/transformer_architecture_positional_encoding/
@@ -464,7 +471,7 @@ def main() -> int:
 		ignore_index=role2index[PAD_ROLE],
 		reduction='sum'
 	)
-	optimizer = torch.optim.Adam(model.parameters(), weight_decay=0.0)
+	optimizer = torch.optim.Adam(model.parameters(), weight_decay=0.0) # TODO: try weight_decay=0.01
 
 	log_steps: int = 10
 	train_loss: float = 0.0
