@@ -25,6 +25,7 @@ DROPOUT_RATE: float = 0.2 # probability of removing
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS: int   = 3
 POSITIONAL_ENCODING: bool = False
+ATTENTION: bool = False
 
 # Vocabulary's generation parameters
 LEMMA_KEEP_THRESHOLD: int = 1
@@ -298,7 +299,9 @@ class SRLModel(torch.nn.Module):
 			device=device
 		)
 		lstm_output_dim = 2*lstm_hidden_dim # because of bidirectional LSTM
-		self.classifier = torch.nn.Linear(lstm_output_dim, out_features,
+		self.classifier = torch.nn.Linear(lstm_output_dim, lstm_output_dim,
+			device=device)
+		self.classifier2 = torch.nn.Linear(lstm_output_dim, out_features,
 			device=device)
 
 		if __debug__:
@@ -351,11 +354,14 @@ class SRLModel(torch.nn.Module):
 
 		lemmas_embeddings = self.dropout(lemmas_embeddings)
 
-		query, key, value = (lemmas_embeddings,)*3
-		attention_embeddings, _ = self.multihead_attention(query, key, value,
-			key_padding_mask=(sentences == lemma2index[PAD_LEMMA]).to(device),
-			need_weights=False)
-		assert attention_embeddings.shape == lemmas_embeddings.shape
+		if ATTENTION:
+			query, key, value = (lemmas_embeddings,)*3
+			attention_embeddings, _ = self.multihead_attention(query, key, value,
+				key_padding_mask=(sentences == lemma2index[PAD_LEMMA]).to(device),
+				need_weights=False)
+			assert attention_embeddings.shape == lemmas_embeddings.shape
+		else:
+			attention_embeddings = lemmas_embeddings
 
 		# Adding the information about which word is the predicate and POS
 		# tagging at the end of each embedding.
@@ -370,6 +376,7 @@ class SRLModel(torch.nn.Module):
 		o = self.dropout(o)
 
 		out = self.classifier(o)
+		out = self.classifier2(out)
 		assert out.shape == (batch_size, seq_len, self.out_features)
 		return out
 
