@@ -24,11 +24,11 @@ TOT_EMBED_DIM: int = LEMMAS_EMBED_DIM+POS_EMBED_DIM+PRED_EMBED_DIM
 DROPOUT_RATE: float = 0.2 # probability of removing
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS: int   = 3
-POSITIONAL_ENCODING: bool = True
+POSITIONAL_ENCODING: bool = False
 
 # Vocabulary's generation parameters
 LEMMA_KEEP_THRESHOLD: int = 1
-LEMMA_KEEP_PROBABILITY: float = 1.0
+LEMMA_KEEP_PROBABILITY: float = 0.9
 
 # Trainig hyper-parameters
 DEFAULT_LOSS_WEIGHT: float = 1.0
@@ -426,9 +426,10 @@ def main() -> int:
 
 			for word, num in sorted(lemmas_counter.items()):
 				# NOTE: is evaluation order defined in python?
-				if num > LEMMA_KEEP_THRESHOLD and \
+				if num <= LEMMA_KEEP_THRESHOLD and \
 					random.random() <= LEMMA_KEEP_PROBABILITY:
-					print(word, file=vocab_file)
+					continue
+				print(word, file=vocab_file)
 
 		del lemmas_counter, sentences, sentence, word, num, vocab_file, train_data_file
 	assert dir() == [], f'{dir()}'
