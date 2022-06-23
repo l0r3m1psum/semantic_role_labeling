@@ -569,5 +569,33 @@ def main() -> int:
 	# del losses, loss_file, batch, X, Y, avg_epoch_loss, epoch, epoch_loss, \
 	# 	log_steps, loss, train_loss, valid_loss
 
+	model.load_state_dict(torch.load('../model/best_model.pt'))
+	model.eval()
+
+	print('Generating the confusion matrix')
+	n_classes = len(index2role)-1
+	confusion_matrix = [
+		[0 for _ in range(n_classes)] for _ in range(n_classes)
+	]
+	with torch.no_grad():
+		for sentences, pos_tags, predicates, actual_roles in validation_dataloader:
+			for predictions, truths in zip(model(sentences, pos_tags, predicates), actual_roles):
+				predictions = torch.argmax(predictions, dim=-1)
+				for prediction, truth in zip(predictions, truths):
+					if truth == role2index[PAD_ROLE]:
+						continue
+					confusion_matrix[prediction-1][truth-1] += 1
+
+	for i, row in enumerate(confusion_matrix):
+		tot = sum(row)
+		for j, n in enumerate(row):
+			confusion_matrix[i][j] = n/tot if tot != 0 else 0
+
+	to_string = lambda i: index2role[1:][i] if i != 0 else 'null'
+
+	print('xxx ' + ' '.join(to_string(i) for i in range(n_classes)))
+	for i, row in enumerate(confusion_matrix):
+		print(f'{to_string(i)} ' + ' '.join(f'{num}' for num in row))
+
 if __name__ == '__main__':
 	raise SystemExit(main())
