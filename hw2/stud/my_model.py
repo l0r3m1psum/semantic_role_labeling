@@ -494,77 +494,78 @@ def main() -> int:
 	best_valid_loss: float = float('inf')
 	losses: List[Tuple[float, float]] = []
 
-	for epoch in range(EPOCHS):
-		print(f' Epoch {epoch:03d}')
-		epoch_loss: float = 0.0
+	if False:
+		for epoch in range(EPOCHS):
+			print(f' Epoch {epoch:03d}')
+			epoch_loss: float = 0.0
 
-		model.train()
-		for step, batch in enumerate(train_dataloader):
-			sentences, pos_tags, predicates, actual_roles = batch
-			if __debug__: batch_size, seq_len = actual_roles.shape
-			assert batch_size <= BATCH_SIZE
-			sentences = sentences.to(device)
-			pos_tags = pos_tags.to(device)
-			predicates = predicates.to(device)
-			actual_roles = actual_roles.to(device)
-			optimizer.zero_grad()
-
-			# The model outputs logits.
-			predicted_roles = model(sentences, pos_tags, predicates)
-			predicted_roles = predicted_roles.view(-1, predicted_roles.shape[-1])
-			assert predicted_roles.shape == (batch_size*seq_len, len(index2role))
-			actual_roles = actual_roles.view(-1)
-			assert actual_roles.shape == (batch_size*seq_len,)
-			loss = criterion(predicted_roles, actual_roles)
-			loss.backward()
-			optimizer.step()
-
-			epoch_loss += loss.tolist()
-
-			if step % log_steps == log_steps - 1:
-				print(f'\t[E: {epoch:2d} @ step {step:3d}] current avg loss = '
-					f'{epoch_loss / (step + 1):0.4f}')
-
-		avg_epoch_loss = epoch_loss / len(train_dataloader)
-		train_loss += avg_epoch_loss
-
-		print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
-
-		valid_loss = 0.0
-		model.eval()
-		with torch.no_grad():
-			for batch in validation_dataloader:
-				sentences, pos_tags, predicates, actual_roles= batch
+			model.train()
+			for step, batch in enumerate(train_dataloader):
+				sentences, pos_tags, predicates, actual_roles = batch
+				if __debug__: batch_size, seq_len = actual_roles.shape
+				assert batch_size <= BATCH_SIZE
 				sentences = sentences.to(device)
 				pos_tags = pos_tags.to(device)
 				predicates = predicates.to(device)
 				actual_roles = actual_roles.to(device)
-				predictions = model(sentences, pos_tags, predicates)
-				predictions = predictions.view(-1, predictions.shape[-1])
+				optimizer.zero_grad()
+
+				# The model outputs logits.
+				predicted_roles = model(sentences, pos_tags, predicates)
+				predicted_roles = predicted_roles.view(-1, predicted_roles.shape[-1])
+				assert predicted_roles.shape == (batch_size*seq_len, len(index2role))
 				actual_roles = actual_roles.view(-1)
-				loss = criterion(predictions, actual_roles)
-				valid_loss += loss.tolist()
+				assert actual_roles.shape == (batch_size*seq_len,)
+				loss = criterion(predicted_roles, actual_roles)
+				loss.backward()
+				optimizer.step()
 
-		valid_loss /= len(validation_dataloader)
-		if valid_loss < best_valid_loss:
-			best_valid_loss = valid_loss
-			print('saving best model overall')
-			torch.save(model.state_dict(), MODEL_FNAME+'.best')
+				epoch_loss += loss.tolist()
 
-		print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
-		losses.append((avg_epoch_loss, valid_loss))
+				if step % log_steps == log_steps - 1:
+					print(f'\t[E: {epoch:2d} @ step {step:3d}] current avg loss = '
+						f'{epoch_loss / (step + 1):0.4f}')
 
-	print('... Done!')
+			avg_epoch_loss = epoch_loss / len(train_dataloader)
+			train_loss += avg_epoch_loss
 
-	avg_epoch_loss = train_loss/EPOCHS
+			print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
 
-	print('saving last model')
-	torch.save(model.state_dict(), MODEL_FNAME+'.last')
+			valid_loss = 0.0
+			model.eval()
+			with torch.no_grad():
+				for batch in validation_dataloader:
+					sentences, pos_tags, predicates, actual_roles= batch
+					sentences = sentences.to(device)
+					pos_tags = pos_tags.to(device)
+					predicates = predicates.to(device)
+					actual_roles = actual_roles.to(device)
+					predictions = model(sentences, pos_tags, predicates)
+					predictions = predictions.view(-1, predictions.shape[-1])
+					actual_roles = actual_roles.view(-1)
+					loss = criterion(predictions, actual_roles)
+					valid_loss += loss.tolist()
 
-	with open(LOSS_FNAME, 'w') as loss_file:
-		print('# train development', file=loss_file)
-		for avg_epoch_loss, valid_loss in losses:
-			print(f'{avg_epoch_loss} {valid_loss}', file=loss_file)
+			valid_loss /= len(validation_dataloader)
+			if valid_loss < best_valid_loss:
+				best_valid_loss = valid_loss
+				print('saving best model overall')
+				torch.save(model.state_dict(), MODEL_FNAME+'.best')
+
+			print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
+			losses.append((avg_epoch_loss, valid_loss))
+
+		print('... Done!')
+
+		avg_epoch_loss = train_loss/EPOCHS
+
+		print('saving last model')
+		torch.save(model.state_dict(), MODEL_FNAME+'.last')
+
+		with open(LOSS_FNAME, 'w') as loss_file:
+			print('# train development', file=loss_file)
+			for avg_epoch_loss, valid_loss in losses:
+				print(f'{avg_epoch_loss} {valid_loss}', file=loss_file)
 
 	# del losses, loss_file, batch, X, Y, avg_epoch_loss, epoch, epoch_loss, \
 	# 	log_steps, loss, train_loss, valid_loss
@@ -584,7 +585,7 @@ def main() -> int:
 				for prediction, truth in zip(predictions, truths):
 					if truth == role2index[PAD_ROLE]:
 						continue
-					confusion_matrix[prediction-1][truth-1] += 1
+					confusion_matrix[truth-1][prediction-1] += 1
 
 	for i, row in enumerate(confusion_matrix):
 		tot = sum(row)
